@@ -1,0 +1,954 @@
+<template>
+    <view class="uni-container">
+        <!-- 筛选和搜索区域 -->
+        <view class="filter-container">
+            <view class="search-box">
+                <input class="search-input" v-model="searchKeyword" placeholder="搜索数据" />
+                <view class="search-btn">
+                    <image class="search-icon" src="/static/chazhao.png"></image>
+                </view>
+            </view>
+            
+            <view class="filter-options">
+                <view class="filter-item">
+                    <text class="filter-label">排序方式:</text>
+                    <picker class="filter-picker" @change="handleSortChange" :value="tempSortIndex" :range="sortOptions">
+                        <view class="picker-view">
+                            <text class="picker-text">{{sortOptions[tempSortIndex]}}</text>
+                        </view>
+                    </picker>
+                </view>
+                
+                <view class="filter-item">
+                    <text class="filter-label">起始日期:</text>
+                    <picker class="filter-picker" mode="date" :value="tempStartDate" @change="handleStartDateChange">
+                        <view class="picker-view">
+                            <text class="picker-text">{{tempStartDate || '全部'}}</text>
+                        </view>
+                    </picker>
+                </view>
+                
+                <view class="filter-item">
+                    <text class="filter-label">结束日期:</text>
+                    <picker class="filter-picker" mode="date" :value="tempEndDate" @change="handleEndDateChange">
+                        <view class="picker-view">
+                            <text class="picker-text">{{tempEndDate || '全部'}}</text>
+                        </view>
+                    </picker>
+                </view>
+                
+                <view class="filter-actions">
+                    <view class="filter-btn refresh-btn" @click="refreshData">
+                        <text class="filter-btn-text">刷新</text>
+                    </view>
+                    <view class="filter-btn reset-btn" @click="resetFilters">
+                        <text class="filter-btn-text">重置</text>
+                    </view>
+                    <view class="filter-btn apply-btn" @click="applyFilters">
+                        <text class="filter-btn-text">确认筛选</text>
+                    </view>
+                </view>
+            </view>
+        </view>
+        
+        <!-- 当前筛选条件提示 -->
+        <view class="current-filters" v-if="hasActiveFilters">
+            <text class="current-filters-text">当前筛选: </text>
+            <text class="current-filters-value" v-if="searchKeyword">关键词"{{searchKeyword}}" </text>
+            <text class="current-filters-value" v-if="sortIndex === 1">时间正序 </text>
+            <text class="current-filters-value" v-if="startDate || endDate">
+                日期{{startDate ? formatSimpleDate(startDate) : '起始'}}至{{endDate ? formatSimpleDate(endDate) : '现在'}}
+            </text>
+        </view>
+        
+        <!-- 记录列表 -->
+        <view class="records-list">
+            <view class="record-item" v-for="(item, index) in currentPageRecords" :key="index">
+                <view class="record-left-border"></view>
+                <view class="record-content">
+                    <view class="record-header">
+                        <view class="record-info">
+                    <view class="record-row">
+                        <text class="record-label">数据名称:</text>
+                        <text class="record-value">{{item.data_name}}</text>
+                    </view>
+                    <view class="record-row">
+                        <text class="record-label">记录时间:</text>
+                                <text class="record-value">{{formatDate(item.data_update)}}</text>
+                            </view>
+                    </view>
+                    <view class="record-actions">
+                        <view class="action-btn view-btn" @click="viewRecord(item)">
+                                <image class="action-img" src="/static/chazhao.png"></image>
+                        </view>
+                        <view class="action-btn delete-btn" @click="deleteRecord(item)">
+                                <image class="action-img" src="/static/shanchu.png"></image>
+                            </view>
+                        </view>
+                    </view>
+                </view>
+            </view>
+            
+            <!-- 无数据提示 -->
+            <view class="no-data" v-if="filteredRecords.length === 0">
+                <text class="no-data-text">暂无符合条件的数据</text>
+            </view>
+        </view>
+        
+        <!-- 分页控制 -->
+        <view class="pagination" v-if="totalPages > 0">
+            <view class="pagination-btn" @click="prevPage" :class="{ disabled: currentPage === 1 }">
+                <text class="pagination-text">上一页</text>
+            </view>
+            
+            <view class="pagination-info">
+                <text class="pagination-text">{{currentPage}}/{{totalPages}}</text>
+            </view>
+            
+            <view class="pagination-btn" @click="nextPage" :class="{ disabled: currentPage === totalPages }">
+                <text class="pagination-text">下一页</text>
+            </view>
+            
+            <!-- 跳转页码 -->
+            <view class="pagination-jump">
+                <text class="pagination-text jump-label">跳转到</text>
+                <input 
+                    class="jump-input" 
+                    type="number" 
+                    v-model="jumpPage" 
+                    @blur="handleJumpBlur"
+                    @confirm="jumpToPage"
+                />
+                <text class="pagination-text jump-label">页</text>
+                <view class="pagination-btn jump-btn" @click="jumpToPage">
+                    <text class="pagination-text">确定</text>
+                </view>
+            </view>
+        </view>
+        
+        <!-- 文件内容弹窗 -->
+        <view class="file-modal" v-if="showFileContent">
+            <view class="modal-mask" @click="closeFileContent"></view>
+            <view class="modal-content">
+                <view class="modal-header">
+                    <text class="modal-title">{{currentFileName}}</text>
+                    <view class="modal-close" @click="closeFileContent">
+                        <text class="close-icon">×</text>
+                    </view>
+                </view>
+                <scroll-view class="modal-body" scroll-y="true">
+                    <text class="file-content">{{fileContent}}</text>
+                </scroll-view>
+            </view>
+        </view>
+    </view>
+</template>
+<script>
+    import setTabBar from '@/components/api-set-tabbar.nvue';
+    import appConfig from '@/config/config.js';
+    
+    export default {
+        components: {
+            setTabBar
+        },
+		props: {
+			hasLeftWin: {
+				type: Boolean
+			},
+			leftWinActive: {
+				type: String
+			}
+		},
+        data() {
+            return {
+                records: [],
+                config: appConfig,
+                currentPage: 1,
+                pageSize: 10,
+                jumpPage: '',
+                
+                // 实际应用的筛选条件
+                searchKeyword: '',
+                sortIndex: 0,
+                startDate: '',
+                endDate: '',
+                
+                // 临时筛选条件（确认前）
+                tempSearchKeyword: '',
+                tempSortIndex: 0,
+                tempStartDate: '',
+                tempEndDate: '',
+                
+                sortOptions: ['按时间倒序', '按时间正序'],
+                
+                // 文件内容相关
+                showFileContent: false,
+                fileContent: '',
+                currentFileName: ''
+            };
+        },
+        computed: {
+            apiDataUrl() {
+                return `${this.config.apiBaseUrl}${this.config.apiPaths.dataList}`;
+            },
+            apiDeleteUrl() {
+                return `${this.config.apiBaseUrl}${this.config.apiPaths.dataDelete}`;
+            },
+            dbConfig() {
+                return this.config.database;
+            },
+            hasActiveFilters() {
+                return this.searchKeyword || 
+                       this.sortIndex !== 0 || 
+                       this.startDate || 
+                       this.endDate;
+            },
+            filteredRecords() {
+                let result = [...this.records];
+                
+                // 搜索过滤
+                if (this.searchKeyword.trim()) {
+                    const keyword = this.searchKeyword.trim().toLowerCase();
+                    result = result.filter(item => 
+                        item.data_name && item.data_name.toLowerCase().includes(keyword)
+                    );
+                }
+                
+                // 日期范围过滤
+                if (this.startDate || this.endDate) {
+                    result = result.filter(item => {
+                        if (!item.data_update) return false;
+                        
+                        const itemDate = new Date(item.data_update);
+                        
+                        // 检查起始日期
+                        if (this.startDate) {
+                            const startDate = new Date(this.startDate);
+                            startDate.setHours(0, 0, 0, 0);
+                            if (itemDate < startDate) return false;
+                        }
+                        
+                        // 检查结束日期
+                        if (this.endDate) {
+                            const endDate = new Date(this.endDate);
+                            endDate.setHours(23, 59, 59, 999);
+                            if (itemDate > endDate) return false;
+                        }
+                        
+                        return true;
+                    });
+                }
+                
+                // 排序
+                result.sort((a, b) => {
+                    const dateA = new Date(a.data_update || 0);
+                    const dateB = new Date(b.data_update || 0);
+                    return this.sortIndex === 0 ? dateB - dateA : dateA - dateB;
+                });
+                
+                return result;
+            },
+            totalPages() {
+                return Math.max(1, Math.ceil(this.filteredRecords.length / this.pageSize));
+            },
+            currentPageRecords() {
+                const start = (this.currentPage - 1) * this.pageSize;
+                const end = start + this.pageSize;
+                return this.filteredRecords.slice(start, end);
+            }
+        },
+        watch: {
+            filteredRecords() {
+                // 当过滤条件改变时，重置到第一页
+                this.currentPage = 1;
+            }
+        },
+        onShareAppMessage() {
+            return {
+                title: '欢迎体验uni-app',
+                path: '/pages/tabBar/API/API'
+            };
+        },
+        onNavigationBarButtonTap(e) {
+            uni.navigateTo({
+                url: '/pages/about/about'
+            });
+        },
+        onLoad() {
+            uni.setNavigationBarTitle({
+                title: '主页'
+            });
+            this.fetchRecords();
+        },
+        onReady() {
+        },
+        onShow() {
+            this.navigateFlag = false;
+        },
+        onHide() {
+        },
+        onPullDownRefresh() {
+            this.fetchRecords();
+        },
+        methods: {
+            formatDate(dateString) {
+                if (!dateString) return '';
+                const date = new Date(dateString);
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${year}-${month}-${day} ${hours}:${minutes}`;
+            },
+            formatSimpleDate(dateString) {
+                if (!dateString) return '';
+                const date = new Date(dateString);
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            },
+            handleSortChange(e) {
+                this.tempSortIndex = parseInt(e.detail.value);
+            },
+            handleStartDateChange(e) {
+                this.tempStartDate = e.detail.value;
+                
+                // 确保结束日期不早于开始日期
+                if (this.tempEndDate && this.tempStartDate > this.tempEndDate) {
+                    this.tempEndDate = this.tempStartDate;
+                }
+            },
+            handleEndDateChange(e) {
+                this.tempEndDate = e.detail.value;
+                
+                // 确保开始日期不晚于结束日期
+                if (this.tempStartDate && this.tempEndDate < this.tempStartDate) {
+                    this.tempStartDate = this.tempEndDate;
+                }
+            },
+            resetFilters() {
+                // 重置临时筛选条件
+                this.tempSearchKeyword = '';
+                this.tempSortIndex = 0;
+                this.tempStartDate = '';
+                this.tempEndDate = '';
+                
+                // 重置实际筛选条件
+                this.searchKeyword = '';
+                this.sortIndex = 0;
+                this.startDate = '';
+                this.endDate = '';
+                
+                // 重置页码
+                this.currentPage = 1;
+            },
+            applyFilters() {
+                // 应用临时筛选条件
+                this.searchKeyword = this.tempSearchKeyword;
+                this.sortIndex = this.tempSortIndex;
+                this.startDate = this.tempStartDate;
+                this.endDate = this.tempEndDate;
+                
+                // 重置页码
+                this.currentPage = 1;
+                
+                uni.showToast({
+                    title: '筛选已应用',
+                    icon: 'success',
+                    duration: 1500
+                });
+            },
+            refreshData() {
+                // 刷新数据但保留当前筛选条件
+                uni.showLoading({
+                    title: '刷新中...'
+                });
+                
+                // 重新获取数据
+                this.fetchRecords();
+                
+                uni.showToast({
+                    title: '数据已刷新',
+                    icon: 'success',
+                    duration: 1500
+                });
+            },
+            prevPage() {
+                if (this.currentPage > 1) {
+                    this.currentPage--;
+                }
+            },
+            nextPage() {
+                if (this.currentPage < this.totalPages) {
+                    this.currentPage++;
+                }
+            },
+            handleJumpBlur() {
+                // 验证输入的页码是否有效
+                if (this.jumpPage) {
+                    const page = parseInt(this.jumpPage);
+                    if (isNaN(page) || page < 1 || page > this.totalPages) {
+                        uni.showToast({
+                            title: '页码无效',
+                            icon: 'none'
+                        });
+                        this.jumpPage = '';
+                    }
+                }
+            },
+            jumpToPage() {
+                if (this.jumpPage) {
+                    const page = parseInt(this.jumpPage);
+                    if (!isNaN(page) && page >= 1 && page <= this.totalPages) {
+                        this.currentPage = page;
+                    } else {
+                        uni.showToast({
+                            title: '页码无效',
+                            icon: 'none'
+                        });
+                    }
+                    this.jumpPage = '';
+                }
+            },
+            fetchRecords() {
+                uni.showLoading({
+                    title: '加载中'
+                });
+                
+                uni.request({
+                    url: this.apiDataUrl,
+                    method: 'POST',
+                    data: this.dbConfig,
+                    success: (res) => {
+                        if (res.statusCode === 200 && res.data) {
+                            // 验证记录结构
+                            if (Array.isArray(res.data)) {
+                                console.log(`成功获取记录：${res.data.length}条`);
+                                
+                                // 检查记录结构
+                                if (res.data.length > 0) {
+                                    const firstRecord = res.data[0];
+                                    console.log('记录结构示例:', firstRecord);
+                                    
+                                    // 检查是否有data_id字段
+                                    if (!('data_id' in firstRecord)) {
+                                        console.warn('警告：记录缺少data_id字段');
+                                    } else {
+                                        console.log('使用data_id作为记录唯一标识');
+                                    }
+                                }
+                            }
+                            
+                            this.records = res.data;
+                            
+                            // 重置筛选条件和页码
+                            this.resetFilters();
+                        } else {
+                            uni.showToast({
+                                title: '获取数据失败',
+                                icon: 'none'
+                            });
+                        }
+                    },
+                    fail: (err) => {
+                        console.error('请求失败:', err);
+                        uni.showToast({
+                            title: '网络请求失败',
+                            icon: 'none'
+                        });
+                    },
+                    complete: () => {
+                        uni.hideLoading();
+                        uni.stopPullDownRefresh();
+                    }
+                });
+            },
+            viewRecord(item) {
+                // 构建文件名
+                const fileName = item.data_name + '.txt';
+                console.log(`跳转到分析页面，文件名: ${fileName}`);
+                
+                // 跳转到分析页面
+                uni.navigateTo({
+                    url: `/pages/analysis/analysis?filename=${encodeURIComponent(fileName)}`
+                });
+            },
+            deleteRecord(item) {
+                uni.showModal({
+                    title: '提示',
+                    content: '确定要删除记录 ' + item.data_name + ' 吗？\n此操作将同时删除数据库记录和对应的数据文件！',
+                    success: (res) => {
+                        if (res.confirm) {
+                            // 检查item对象
+                            console.log('要删除的记录:', item);
+                            console.log('记录ID:', item.data_id);
+                            
+                            // 检查记录是否有有效的ID字段
+                            if (!item.data_id && item.data_id !== 0) {
+                                console.error('错误：记录缺少data_id字段');
+                                uni.showToast({
+                                    title: '记录ID无效',
+                                    icon: 'none'
+                                });
+                                return;
+                            }
+                            
+                            // 构建请求数据
+                            const requestData = {
+                                ...this.dbConfig,
+                                id: item.data_id  // 使用data_id作为记录的唯一标识
+                            };
+                            console.log('发送的请求数据:', requestData);
+                            
+                            // 先删除数据库记录
+                            uni.request({
+                                url: this.apiDeleteUrl,
+                                method: 'POST',
+                                data: requestData,
+                                success: (res) => {
+                                    if (res.statusCode === 200) {
+                                        // 数据库记录删除成功，继续删除对应的txt文件
+                                        const txtFileName = item.data_name + '.txt';
+                                        const deleteFileUrl = `${this.config.apiBaseUrl}/api/files/delete`;
+                                        
+                                        // 调用删除文件的API
+                                        uni.request({
+                                            url: deleteFileUrl,
+                                            method: 'POST',
+                                            data: {
+                                                filename: txtFileName
+                                            },
+                                            success: (fileRes) => {
+                                                // 无论文件删除成功与否，都从本地列表中移除记录
+                                                const index = this.records.findIndex(record => record.data_id === item.data_id);
+                                        if (index !== -1) {
+                                            this.records.splice(index, 1);
+                                        }
+                                                
+                                                if (fileRes.statusCode === 200) {
+                                        uni.showToast({
+                                                        title: '记录和文件已删除',
+                                            icon: 'success'
+                                        });
+                                    } else {
+                                        uni.showToast({
+                                                        title: '记录已删除，但文件删除失败',
+                                            icon: 'none'
+                                        });
+                                                    console.error('文件删除失败:', fileRes.data);
+                                                }
+                                            },
+                                            fail: (fileErr) => {
+                                                // 文件删除请求失败，但数据库记录已删除，仍从本地列表中移除
+                                                const index = this.records.findIndex(record => record.data_id === item.data_id);
+                                                if (index !== -1) {
+                                                    this.records.splice(index, 1);
+                                                }
+                                                
+                                                uni.showToast({
+                                                    title: '记录已删除，但文件删除请求失败',
+                                                    icon: 'none'
+                                                });
+                                                console.error('文件删除请求失败:', fileErr);
+                                            }
+                                        });
+                                    } else {
+                                        uni.showToast({
+                                            title: '删除记录失败',
+                                            icon: 'none'
+                                        });
+                                        console.error('删除记录失败:', res.data);
+                                    }
+                                },
+                                fail: (err) => {
+                                    uni.showToast({
+                                        title: '网络请求失败',
+                                        icon: 'none'
+                                    });
+                                    console.error('网络请求失败:', err);
+                                }
+                            });
+                        }
+                    }
+                });
+            },
+            closeFileContent() {
+                this.showFileContent = false;
+                this.fileContent = '';
+                this.currentFileName = '';
+            }
+        }
+    };
+</script>
+
+<style>
+    @import '../../../common/uni-nvue.css';
+    .uni-container {
+        padding: 15px;
+        background-color: #F5F5F5;
+        flex: 1;
+    }
+    
+    /* 筛选区域样式 */
+    .filter-container {
+        background-color: #FFFFFF;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 10px;
+    }
+    
+    .search-box {
+        flex-direction: row;
+        align-items: center;
+        border: 1px solid #E0E0E0;
+        border-radius: 4px;
+        padding: 0 10px;
+        margin-bottom: 10px;
+    }
+    
+    .search-input {
+        flex: 1;
+        height: 36px;
+        font-size: 14px;
+    }
+    
+    .search-btn {
+        width: 36px;
+        height: 36px;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .search-icon {
+        width: 20px;
+        height: 20px;
+    }
+    
+    .filter-options {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    
+    .filter-item {
+        flex-direction: row;
+        align-items: center;
+        margin-right: 15px;
+        margin-bottom: 10px;
+    }
+    
+    .filter-label {
+        font-size: 13px;
+        color: #333333;
+        margin-right: 5px;
+    }
+    
+    .filter-picker {
+        width: 120px;
+    }
+    
+    .picker-view {
+        height: 30px;
+        border: 1px solid #E0E0E0;
+        border-radius: 4px;
+        padding: 0 8px;
+        justify-content: center;
+    }
+    
+    .picker-text {
+        font-size: 13px;
+        color: #666666;
+    }
+    
+    .filter-actions {
+        flex-direction: row;
+        justify-content: center;
+        margin-top: 10px;
+        width: 100%;
+    }
+    
+    .filter-btn {
+        padding: 6px 15px;
+        border-radius: 4px;
+        margin: 0 10px;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    /* 按钮文字基础样式 */
+    .filter-btn-text {
+        font-size: 14px;
+    }
+    
+    .refresh-btn {
+        background-color: #1E90FF;
+        border: 1px solid #1E90FF;
+    }
+    
+    .refresh-btn .filter-btn-text {
+        color: #FFFFFF;
+    }
+    
+    .reset-btn {
+        background-color: #F5F5F5;
+        border: 1px solid #DDDDDD;
+    }
+    
+    .reset-btn .filter-btn-text {
+        color: #666666;
+    }
+    
+    .apply-btn {
+        background-color: #2871FA;
+        border: 1px solid #2871FA;
+    }
+    
+    .apply-btn .filter-btn-text {
+        color: #FFFFFF !important;
+    }
+    
+    /* 当前筛选条件 */
+    .current-filters {
+        background-color: #F0F8FF;
+        border-radius: 4px;
+        padding: 8px 12px;
+        flex-direction: row;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+    }
+    
+    .current-filters-text {
+        font-size: 12px;
+        color: #666666;
+    }
+    
+    .current-filters-value {
+        font-size: 12px;
+        color: #2871FA;
+        margin-right: 8px;
+    }
+    
+    /* 记录列表样式 */
+    .records-list {
+        flex-direction: column;
+    }
+    
+    .record-item {
+        flex-direction: row;
+        background-color: #FFFFFF;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        overflow: hidden;
+    }
+    
+    .record-left-border {
+        width: 8px;
+        background-color: #2871FA;
+    }
+    
+    .record-content {
+        flex: 1;
+        padding: 12px;
+    }
+    
+    .record-header {
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    .record-info {
+        flex: 1;
+    }
+    
+    .record-row {
+        flex-direction: row;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+    
+    .record-label {
+        color: #333333;
+        font-size: 13px;
+        margin-right: 5px;
+        width: 70px;
+    }
+    
+    .record-value {
+        color: #666666;
+        font-size: 13px;
+        flex: 1;
+    }
+    
+    .record-actions {
+        flex-direction: row;
+        align-items: center;
+    }
+    
+    .action-btn {
+        width: 28px;
+        height: 28px;
+        border-radius: 14px;
+        align-items: center;
+        justify-content: center;
+        margin-left: 8px;
+    }
+    
+    .action-img {
+        width: 16px;
+        height: 16px;
+    }
+    
+    .view-btn {
+        background-color: #2871FA;
+    }
+    
+    .delete-btn {
+        background-color: #FF5252;
+    }
+    
+    /* 无数据提示 */
+    .no-data {
+        padding: 30px 0;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .no-data-text {
+        color: #999999;
+        font-size: 14px;
+    }
+    
+    /* 分页样式 */
+    .pagination {
+        flex-direction: row;
+        justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 15px;
+        padding: 10px 0;
+    }
+    
+    .pagination-btn {
+        background-color: #2871FA;
+        padding: 6px 15px;
+        border-radius: 4px;
+        margin: 0 5px;
+    }
+    
+    .pagination-btn.disabled {
+        background-color: #CCCCCC;
+        opacity: 0.6;
+    }
+    
+    .pagination-info {
+        padding: 5px 10px;
+    }
+    
+    .pagination-text {
+        color: #FFFFFF;
+        font-size: 14px;
+    }
+    
+    .pagination-info .pagination-text {
+        color: #333333;
+    }
+    
+    /* 跳转页码样式 */
+    .pagination-jump {
+        flex-direction: row;
+        align-items: center;
+        margin-left: 10px;
+        margin-top: 8px;
+    }
+    
+    .jump-label {
+        color: #333333;
+        font-size: 14px;
+        margin: 0 5px;
+    }
+    
+    .jump-input {
+        width: 50px;
+        height: 30px;
+        border: 1px solid #E0E0E0;
+        border-radius: 4px;
+        font-size: 14px;
+        text-align: center;
+        background-color: #FFFFFF;
+    }
+    
+    .jump-btn {
+        margin-left: 5px;
+        padding: 6px 10px;
+    }
+    
+    /* 文件内容弹窗样式 */
+    .file-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 999;
+    }
+    
+    .modal-mask {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+    }
+    
+    .modal-content {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 80%;
+        max-width: 600px;
+        background-color: #FFFFFF;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    .modal-header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+        padding: 15px;
+        border-bottom-width: 1px;
+        border-bottom-color: #EEEEEE;
+    }
+    
+    .modal-title {
+        font-size: 16px;
+        color: #333333;
+        font-weight: bold;
+    }
+    
+    .modal-close {
+        width: 30px;
+        height: 30px;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .close-icon {
+        font-size: 24px;
+        color: #999999;
+    }
+    
+    .modal-body {
+        padding: 15px;
+        max-height: 60vh;
+    }
+    
+    .file-content {
+        font-size: 14px;
+        color: #333333;
+        line-height: 1.5;
+    }
+</style>

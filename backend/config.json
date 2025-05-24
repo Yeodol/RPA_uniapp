@@ -1,0 +1,6 @@
+{
+  "db_host": "localhost",
+  "port": 5032,
+  "debug": true,
+  "allowed_origins": ["*"]
+} 

@@ -1,0 +1,163 @@
+{
+	"leftWindow": {
+		"path": "windows/left-window.vue",
+		"style": {
+			"width": "350px"
+		}
+	},
+	"topWindow": {
+		"path": "windows/top-window.vue",
+		"style": {
+			"height": "60px"
+		}
+	},
+	"pages": [
+		{
+			"path": "pages/tabBar/component/component",
+			"style": {
+				"navigationBarTitleText": "报告管理",
+				"app-plus": {
+					"bounce": "vertical",
+					"titleNView": {
+						"buttons": [{
+							"text": "\ue534",
+							"fontSrc": "/static/uni.ttf",
+							"fontSize": "22px",
+							"color": "#FFFFFF"
+						}]
+					}
+				}
+			}
+		},
+		{
+			"path": "pages/tabBar/API/API",
+			"style": {
+				"navigationBarTitleText": "主页",
+				"app-plus": {
+					"titleNView": {
+						"buttons": [{
+							"text": "\ue534",
+							"fontSrc": "/static/uni.ttf",
+							"fontSize": "22px",
+							"color": "#FFFFFF"
+						}]
+					}
+				},
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/tabBar/template/template",
+			"style": {
+				"navigationBarTitleText": "设置",
+				"app-plus": {
+					"titleNView": {
+						"buttons": [{
+							"text": "\ue534",
+							"fontSrc": "/static/uni.ttf",
+							"fontSize": "22px",
+							"color": "#FFFFFF"
+						}]
+					}
+				}
+			}
+		},
+		{
+			"path": "pages/analysis/analysis",
+			"style": {
+				"navigationBarTitleText": "PCR数据分析结果"
+			}
+		},
+		{
+			"path": "pages/pdf-viewer",
+			"style": {
+				"navigationBarTitleText": "PDF报告查看器",
+				"app-plus": {
+					"bounce": "none"
+				}
+			}
+		},
+		{
+			"path": "pages/template/company/company",
+			"style": {
+				"navigationBarTitleText": "公司简介"
+			}
+		},
+		{
+			"path": "pages/template/database/database",
+			"style": {
+				"navigationBarTitleText": "数据库设置"
+			}
+		},
+		{
+			"path": "pages/template/account/account",
+			"style": {
+				"navigationBarTitleText": "账号设置"
+			}
+		},
+		{
+			"path": "pages/template/version/version",
+			"style": {
+				"navigationBarTitleText": "检查版本"
+			}
+		},
+		{
+			"path": "pages/template/account/password",
+			"style": {
+				"navigationBarTitleText": "修改密码"
+			}
+		}
+	],
+	"globalStyle": {
+		"pageOrientation": "portrait",
+		"navigationBarTitleText": "Hello uniapp",
+		"navigationBarTextStyle": "white",
+		"navigationBarBackgroundColor": "#007AFF",
+		"backgroundColor": "#F8F8F8",
+		"backgroundColorTop": "#F4F5F6",
+		"backgroundColorBottom": "#F4F5F6",
+		"mp-360": {
+			"navigationStyle": "custom"
+		},
+		"h5": {
+			"maxWidth": 1190,
+			"navigationBarTextStyle": "black",
+			"navigationBarBackgroundColor": "#F1F1F1"
+		}
+	},
+	"tabBar": {
+		"color": "#7A7E83",
+		"selectedColor": "#007AFF",
+		"borderStyle": "black",
+		"backgroundColor": "#F8F8F8",
+		"list": [{
+				"pagePath": "pages/tabBar/component/component",
+				"iconPath": "static/yuedu.png",
+				"selectedIconPath": "static/yuedu-active.png",
+				"text": "报告管理"
+			},
+			{
+				"pagePath": "pages/tabBar/API/API",
+				"iconPath": "static/home.png",
+				"selectedIconPath": "static/home-active.png",
+				"text": "主页"
+			},
+			{
+				"pagePath": "pages/tabBar/template/template",
+				"iconPath": "static/mine.png",
+				"selectedIconPath": "static/mine-active.png",
+				"text": "设置"
+			}
+		]
+	},
+	"uniIdRouter": {
+		"enable": false
+	},
+	"ignoreNodeModules": true,
+	"ignoreModules": [
+		"uni-config-center",
+		"uni-id",
+		"uni-open-bridge-common",
+		"uni-upgrade-center-app"
+	]
+}
