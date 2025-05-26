@@ -20,6 +20,10 @@ import scipy.optimize as optimize
 import re
 from collections import defaultdict
 from report_generator import PCRReportGenerator
+import fitz  # PyMuPDF
+import tempfile
+from PIL import Image, ImageDraw, ImageFont
+import requests
 
 # 加载.env文件中的环境变量
 load_dotenv()
@@ -749,8 +753,29 @@ def generate_report():
         if 'filename' not in data:
             return jsonify({"success": False, "error": "缺少filename字段"}), 400
         
+        # 确保chart_data中包含了smoothed_data
+        if 'chart_data' in data:
+            print(f"处理{len(data['chart_data'])}个图表数据，准备生成PDF报告")
+            # 迭代每个通道的数据
+            for chart in data['chart_data']:
+                # 如果存在smoothed_data
+                if 'smoothed_data' in chart and chart['smoothed_data']:
+                    # 保存原始trend_data作为备份
+                    if 'original_trend_data' not in chart:
+                        chart['original_trend_data'] = chart.get('trend_data', [])
+                    
+                    # 直接使用smoothed_data
+                    chart['trend_data'] = chart['smoothed_data']
+                    print(f"使用smoothed_data替换trend_data，通道:{chart.get('channel')}, 类型:{chart.get('type')}")
+        
         # 生成报告
         result = report_generator.create_report(data)
+        
+        if result.get('success'):
+            print(f"报告生成成功: {result.get('path')}")
+        else:
+            print(f"报告生成失败: {result.get('error')}")
+            
         return jsonify(result)
         
     except Exception as e:
@@ -814,18 +839,349 @@ def delete_report():
         print(f"删除报告错误: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
+# PDF渲染功能 - 开始
+def render_pdf_to_image(pdf_data, page_num=1, scale=2.0):
+    """
+    将PDF数据渲染为图片
+    
+    参数:
+    - pdf_data: PDF文件的二进制数据
+    - page_num: 要渲染的页码 (从1开始)
+    - scale: 缩放因子
+    
+    返回:
+    - 图片的二进制数据 (PNG格式)
+    """
+    try:
+        # 使用BytesIO创建内存文件对象
+        pdf_stream = BytesIO(pdf_data)
+        
+        # 打开PDF文档
+        doc = fitz.open(stream=pdf_stream, filetype="pdf")
+        
+        # 检查页码是否有效
+        if page_num < 1 or page_num > len(doc):
+            print(f"无效的页码: {page_num}, PDF共有 {len(doc)} 页")
+            return None
+        
+        # 获取指定页面
+        page = doc.load_page(page_num - 1)  # 页码从0开始
+        
+        # 设置渲染参数
+        zoom_matrix = fitz.Matrix(scale, scale)
+        
+        # 渲染为像素图
+        pix = page.get_pixmap(matrix=zoom_matrix, alpha=False)
+        
+        # 将像素图转换为PIL Image对象
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        
+        # 保存为PNG格式
+        img_stream = BytesIO()
+        img.save(img_stream, format="PNG")
+        img_data = img_stream.getvalue()
+        
+        # 关闭文档
+        doc.close()
+        
+        return img_data
+    except Exception as e:
+        print(f"渲染PDF时出错: {str(e)}")
+        return None
+
+def get_pdf_metadata(pdf_data):
+    """
+    获取PDF的元数据
+    
+    参数:
+    - pdf_data: PDF文件的二进制数据
+    
+    返回:
+    - 包含元数据的字典
+    """
+    try:
+        # 使用BytesIO创建内存文件对象
+        pdf_stream = BytesIO(pdf_data)
+        
+        # 打开PDF文档
+        doc = fitz.open(stream=pdf_stream, filetype="pdf")
+        
+        # 获取元数据
+        metadata = {
+            "pageCount": len(doc),
+            "title": doc.metadata.get("title", ""),
+            "author": doc.metadata.get("author", ""),
+            "creator": doc.metadata.get("creator", ""),
+            "producer": doc.metadata.get("producer", ""),
+            "creationDate": doc.metadata.get("creationDate", ""),
+            "modificationDate": doc.metadata.get("modificationDate", "")
+        }
+        
+        # 关闭文档
+        doc.close()
+        
+        return metadata
+    except Exception as e:
+        print(f"获取PDF元数据时出错: {str(e)}")
+        return {"error": str(e)}
+
+def pdf_to_base64_image(pdf_data, page_num=1, scale=2.0):
+    """
+    将PDF转换为Base64编码的图片
+    
+    参数:
+    - pdf_data: PDF文件的二进制数据
+    - page_num: 要渲染的页码 (从1开始)
+    - scale: 缩放因子
+    
+    返回:
+    - Base64编码的图片字符串 (带有data:image/png;base64,前缀)
+    """
+    try:
+        img_data = render_pdf_to_image(pdf_data, page_num, scale)
+        if img_data:
+            base64_data = base64.b64encode(img_data).decode('utf-8')
+            return f"data:image/png;base64,{base64_data}"
+        return None
+    except Exception as e:
+        print(f"转换PDF为Base64图片时出错: {str(e)}")
+        return None
+# PDF渲染功能 - 结束
+
+# 在app.py文件中添加PDF渲染相关的路由
+@app.route('/api/reports/check-rendering', methods=['GET'])
+def check_rendering():
+    """检查是否支持PDF渲染"""
+    try:
+        # 检查是否安装了PyMuPDF
+        import fitz
+        return jsonify({"supported": True, "version": fitz.version[0]})
+    except ImportError:
+        return jsonify({"supported": False, "reason": "PyMuPDF未安装"})
+
+@app.route('/api/reports/pdf-metadata', methods=['GET'])
+def pdf_metadata():
+    """获取PDF元数据"""
+    url = request.args.get('url')
+    if not url:
+        return jsonify({"error": "未提供PDF URL"}), 400
+    
+    try:
+        # 如果URL不是以http开头，假设它是相对路径
+        if not url.startswith('http'):
+            # 获取当前服务器的基础URL
+            base_url = request.host_url.rstrip('/')
+            url = f"{base_url}{url}"
+        
+        # 下载PDF
+        print(f"下载PDF: {url}")
+        response = requests.get(url, stream=True)
+        if response.status_code != 200:
+            return jsonify({"error": f"无法下载PDF，状态码: {response.status_code}"}), 400
+        
+        # 读取PDF内容
+        pdf_data = response.content
+        
+        # 获取元数据
+        metadata = get_pdf_metadata(pdf_data)
+        return jsonify(metadata)
+    except Exception as e:
+        print(f"获取PDF元数据时出错: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/reports/render-page', methods=['GET'])
+def render_page():
+    """将PDF页面渲染为图片"""
+    url = request.args.get('url')
+    page_num = int(request.args.get('page', 1))
+    scale = float(request.args.get('scale', 2.0))
+    
+    if not url:
+        return jsonify({"error": "未提供PDF URL"}), 400
+    
+    try:
+        # 如果URL不是以http开头，假设它是相对路径
+        if not url.startswith('http'):
+            # 获取当前服务器的基础URL
+            base_url = request.host_url.rstrip('/')
+            url = f"{base_url}{url}"
+        
+        # 下载PDF
+        print(f"下载PDF以渲染: {url}")
+        response = requests.get(url, stream=True)
+        if response.status_code != 200:
+            return jsonify({"error": f"无法下载PDF，状态码: {response.status_code}"}), 400
+        
+        # 读取PDF内容
+        pdf_data = response.content
+        
+        # 渲染PDF页面为图片
+        img_data = render_pdf_to_image(pdf_data, page_num, scale)
+        
+        if not img_data:
+            return jsonify({"error": "渲染PDF页面失败"}), 500
+        
+        # 创建临时文件保存图像
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_filename = tmp.name
+            tmp.write(img_data)
+        
+        # 返回图像文件
+        return send_file(tmp_filename, mimetype='image/png')
+    except Exception as e:
+        print(f"渲染PDF页面时出错: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/reports/render-page-base64', methods=['GET'])
+def render_page_base64():
+    """将PDF页面渲染为Base64编码的图片"""
+    url = request.args.get('url')
+    page_num = int(request.args.get('page', 1))
+    scale = float(request.args.get('scale', 2.0))
+    
+    if not url:
+        return jsonify({"error": "未提供PDF URL"}), 400
+    
+    try:
+        # 如果URL不是以http开头，假设它是相对路径
+        if not url.startswith('http'):
+            # 获取当前服务器的基础URL
+            base_url = request.host_url.rstrip('/')
+            url = f"{base_url}{url}"
+        
+        # 下载PDF
+        print(f"下载PDF以渲染为Base64: {url}")
+        response = requests.get(url, stream=True)
+        if response.status_code != 200:
+            return jsonify({"error": f"无法下载PDF，状态码: {response.status_code}"}), 400
+        
+        # 读取PDF内容
+        pdf_data = response.content
+        
+        # 将PDF转换为Base64编码的图片
+        base64_image = pdf_to_base64_image(pdf_data, page_num, scale)
+        
+        if not base64_image:
+            return jsonify({"error": "渲染PDF页面为Base64失败"}), 500
+        
+        return jsonify({"image": base64_image})
+    except Exception as e:
+        print(f"渲染PDF页面为Base64时出错: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/common/sample-pdf-image', methods=['GET'])
+def sample_pdf_image():
+    """提供一个示例PDF图片"""
+    try:
+        # 创建一个简单的图片
+        from PIL import ImageDraw, ImageFont
+        
+        width, height = 800, 1000
+        img = Image.new('RGB', (width, height), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # 绘制边框
+        draw.rectangle([10, 10, width-10, height-10], outline='#CCCCCC', width=2)
+        
+        # 绘制文本
+        try:
+            # 尝试使用系统字体
+            font_path = None
+            if os.name == 'nt':  # Windows
+                font_path = "C:\\Windows\\Fonts\\Arial.ttf"
+            elif os.name == 'posix':  # Linux/Mac
+                font_paths = [
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                    "/System/Library/Fonts/Helvetica.ttc",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+                ]
+                for path in font_paths:
+                    if os.path.exists(path):
+                        font_path = path
+                        break
+            
+            if font_path and os.path.exists(font_path):
+                font_title = ImageFont.truetype(font_path, 30)
+                font_normal = ImageFont.truetype(font_path, 20)
+                font_small = ImageFont.truetype(font_path, 16)
+            else:
+                # 如果找不到字体，使用默认
+                font_title = ImageFont.load_default()
+                font_normal = ImageFont.load_default()
+                font_small = ImageFont.load_default()
+            
+        except Exception as e:
+            print(f"加载字体失败: {str(e)}")
+            # 如果加载字体失败，使用默认
+            font_title = ImageFont.load_default()
+            font_normal = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+        
+        # 绘制标题和文本
+        try:
+            draw.text((width//2, 100), "PDF预览示例", fill='#333333', font=font_title, anchor='mm')
+            draw.text((width//2, 150), "PDF渲染功能正常工作", fill='#333333', font=font_normal, anchor='mm')
+            draw.text((width//2, 200), "这是一个测试图片", fill='#666666', font=font_small, anchor='mm')
+        except Exception as e:
+            print(f"绘制文本失败: {str(e)}")
+            # 使用更简单的绘制方式
+            draw.text((width//2, 100), "PDF预览示例", fill='#333333')
+            draw.text((width//2, 150), "PDF渲染功能正常工作", fill='#333333')
+            draw.text((width//2, 200), "这是一个测试图片", fill='#666666')
+        
+        # 创建临时文件保存图像
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_filename = tmp.name
+            img.save(tmp_filename, format="PNG")
+        
+        # 返回图像文件
+        return send_file(tmp_filename, mimetype='image/png')
+    except Exception as e:
+        print(f"生成示例图片时出错: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# 修改现有的view_report方法，增加渲染为图片的功能
 @app.route('/api/reports/view/<filename>', methods=['GET'])
 def view_report(filename):
     """查看报告API"""
     try:
         # 检查是否请求直接下载文件
         download_mode = request.args.get('download', 'false').lower() == 'true'
+        # 检查是否请求渲染为图片
+        render_image = request.args.get('render', 'false').lower() == 'true'
+        page_num = int(request.args.get('page', 1))
+        scale = float(request.args.get('scale', 2.0))
         
         # 获取报告文件路径
         report_path = report_generator.get_report_file(filename)
         
         if not report_path:
             return jsonify({"success": False, "error": "报告不存在"}), 404
+        
+        # 如果请求渲染为图片
+        if render_image:
+            print(f"渲染报告为图片: {filename}, 页码: {page_num}, 缩放: {scale}")
+            try:
+                # 读取PDF文件
+                with open(report_path, 'rb') as file:
+                    pdf_data = file.read()
+                
+                # 渲染PDF页面为图片
+                img_data = render_pdf_to_image(pdf_data, page_num, scale)
+                
+                if not img_data:
+                    return jsonify({"error": "渲染PDF页面失败"}), 500
+                
+                # 创建临时文件保存图像
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp_filename = tmp.name
+                    tmp.write(img_data)
+                
+                # 返回图像文件
+                return send_file(tmp_filename, mimetype='image/png')
+            except Exception as e:
+                print(f"渲染报告为图片时出错: {str(e)}")
+                return jsonify({"success": False, "error": str(e)}), 500
         
         # 直接提供文件下载
         if download_mode:
@@ -846,7 +1202,8 @@ def view_report(filename):
             "success": True, 
             "content": pdf_base64,
             "filename": filename,
-            "download_url": f"/api/reports/view/{filename}?download=true"
+            "download_url": f"/api/reports/view/{filename}?download=true",
+            "render_url": f"/api/reports/view/{filename}?render=true&page=1"
         })
         
     except Exception as e:
@@ -854,14 +1211,92 @@ def view_report(filename):
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route('/api/reports/render-page-lite', methods=['GET'])
+def render_page_lite():
+    """轻量级API：将PDF页面渲染为图片，使用简化的请求处理减少头部大小问题"""
+    url = request.args.get('url')
+    page_num = int(request.args.get('page', 1))
+    scale = float(request.args.get('scale', 2.0))
+    
+    if not url:
+        return jsonify({"error": "未提供PDF URL"}), 400
+    
+    try:
+        # 处理URL - 从URL中提取PDF文件名
+        pdf_filename = None
+        if '/view/' in url:
+            # 如果是通过view接口获取的PDF
+            parts = url.split('/view/')
+            if len(parts) > 1:
+                pdf_filename = parts[1].split('?')[0]
+        
+        # 如果无法从URL解析出文件名，则使用常规下载方式
+        if not pdf_filename:
+            # 如果URL不是以http开头，假设它是相对路径
+            if not url.startswith('http'):
+                # 获取当前服务器的基础URL
+                base_url = request.host_url.rstrip('/')
+                url = f"{base_url}{url}"
+            
+            # 下载PDF
+            print(f"下载PDF以渲染(轻量模式): {url}")
+            response = requests.get(url, stream=True)
+            if response.status_code != 200:
+                return jsonify({"error": f"无法下载PDF，状态码: {response.status_code}"}), 400
+            
+            # 读取PDF内容
+            pdf_data = response.content
+        else:
+            # 直接从文件系统读取PDF
+            reports_folder = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'RPA', 'data', 'reports')
+            pdf_path = os.path.join(reports_folder, pdf_filename)
+            
+            if not os.path.exists(pdf_path):
+                return jsonify({"error": "找不到PDF文件"}), 404
+                
+            # 读取PDF内容
+            with open(pdf_path, 'rb') as f:
+                pdf_data = f.read()
+        
+        # 渲染PDF页面为图片
+        img_data = render_pdf_to_image(pdf_data, page_num, scale)
+        
+        if not img_data:
+            return jsonify({"error": "渲染PDF页面失败"}), 500
+        
+        # 创建临时文件保存图像
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_filename = tmp.name
+            tmp.write(img_data)
+        
+        # 设置头部缓存控制以减少后续请求的头部大小
+        response = send_file(tmp_filename, mimetype='image/png')
+        response.headers['Cache-Control'] = 'public, max-age=86400'  # 缓存1天
+        response.headers['X-Accel-Buffering'] = 'no'  # 关闭Nginx缓冲，减少头部
+        return response
+    except Exception as e:
+        print(f"轻量渲染PDF页面时出错: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     # 获取服务器配置
-    config = get_server_config()
-    print(f"服务器配置: 端口={config['port']}, 主机={config['host']}, 调试模式={config['debug']}")
+    server_config = get_server_config()
+    print(f"服务器配置: 端口={server_config['port']}, 主机={server_config['host']}, 调试模式={server_config['debug']}")
+    
+    # 设置Werkzeug服务器选项，增加请求头限制
+    from werkzeug.serving import WSGIRequestHandler
+    WSGIRequestHandler.protocol_version = "HTTP/1.1"  # 使用HTTP/1.1
+    
+    # 启动Flask应用
+    print(f"服务器运行在 http://{server_config['host']}:{server_config['port']}")
+    
+    # 设置最大请求头大小，默认值太小可能导致431错误
+    app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 设置为16MB
     
     # 在生产环境中，应该使用正确的WSGI服务器
     app.run(
-        host=config['host'],
-        port=config['port'],
-        debug=config['debug']
+        host=server_config['host'],
+        port=server_config['port'],
+        debug=server_config['debug'],
+        threaded=True
     ) 

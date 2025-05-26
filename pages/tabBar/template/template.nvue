@@ -1,7 +1,9 @@
 <template>
 	<view class="uni-container">
 		<view class="uni-header-logo">
-			<image class="uni-header-image" src="/static/templateIndex.png"></image>
+			<view class="logo-container">
+				<image class="uni-header-image" src="/static/company_logo.jpg"></image>
+			</view>
 		</view>
 		
 		<!-- 功能列表 -->
@@ -65,11 +67,23 @@
 }
 
 .uni-header-logo {
-	padding: 30rpx;
+	padding: 40rpx;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	margin-bottom: 30rpx;
+}
+
+.logo-container {
+	width: 240rpx;
+	height: 240rpx;
+	background-color: #ffffff;
+	border-radius: 24rpx;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.1);
+	padding: 20rpx;
 }
 
 .uni-header-image {

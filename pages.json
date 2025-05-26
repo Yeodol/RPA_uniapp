@@ -71,7 +71,7 @@
 		{
 			"path": "pages/pdf-viewer",
 			"style": {
-				"navigationBarTitleText": "PDF报告查看器",
+				"navigationBarTitleText": "检测报告查看",
 				"app-plus": {
 					"bounce": "none"
 				}

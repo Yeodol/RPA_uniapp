@@ -24,14 +24,14 @@
               <!-- FAM图表 -->
               <view class="chart-box">
                 <text class="chart-type">FAM</text>
-                <view class="chart-container">
-                  <canvas 
+            <view class="chart-container">
+              <canvas 
                     :canvas-id="`pcrChart_${channel}_FAM`" 
                     :id="`pcrChart_${channel}_FAM`"
-                    class="chart-canvas"
+                class="chart-canvas"
                     style="width: 100%; height: 200px;">
-                  </canvas>
-                </view>
+              </canvas>
+            </view>
               </view>
               
               <!-- VIC图表 -->
@@ -631,7 +631,7 @@ export default {
         // 获取所有通道
         const channels = this.getUniqueChannels();
         console.log('唯一通道数量:', channels.length);
-        
+          
         // 遍历每个通道，绘制FAM和VIC图表
         channels.forEach(channel => {
           // 绘制FAM图表
@@ -662,14 +662,14 @@ export default {
         });
       } catch (e) {
         console.error('渲染PCR图表错误:', e);
-      }
+          }
     },
     
     // 获取唯一通道列表
     getUniqueChannels() {
       if (!this.analysisResults || !this.analysisResults.chart_data) {
         return [];
-      }
+        }
       
       const channels = [];
       this.analysisResults.chart_data.forEach(chartData => {
@@ -714,10 +714,10 @@ export default {
           } else {
             // 如果没有数据，绘制空白图表
             this.drawEmptyChart(ctx, chartData, index, type);
-            return;
-          }
+                return;
+              }
         }
-        
+              
         // 获取画布尺寸
         const query = uni.createSelectorQuery().in(this);
         query.select(`#pcrChart_${index}`).boundingClientRect(data => {
@@ -828,7 +828,7 @@ export default {
           ctx.moveTo(padding.left, y);
           ctx.lineTo(canvasWidth - padding.right, y);
           ctx.stroke();
-          
+        
           // 在y轴上绘制刻度值
           if (i === 0 || i === numGrids) {
             ctx.setTextAlign('left');

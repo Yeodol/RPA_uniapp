@@ -61,7 +61,6 @@ class PCRReportGenerator:
             # 添加图表部分标题
             pdf.ln(5)
             pdf.set_font('simhei', '', 14)
-            pdf.cell(0, 10, '***  qPCR/RPA 检测荧光图  ***', 0, 1, 'C')
             pdf.ln(5)
             
             # 为每个通道生成图表
@@ -72,7 +71,6 @@ class PCRReportGenerator:
             # 添加结果表格
             pdf.ln(5)
             pdf.set_font('simhei', '', 14)
-            pdf.cell(0, 10, '***  报告结果  ***', 0, 1, 'C')
             pdf.ln(5)
             
             # 添加结果表格
@@ -137,38 +135,39 @@ class PCRReportGenerator:
         # 文件名去掉.txt后缀
         sample_name = filename.replace('.txt', '')
         
-        pdf.cell(0, 8, '※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※', 0, 1, 'C')
-        pdf.cell(0, 8, f'※ 实验对象：{sample_name}', 0, 1, 'L')
         pdf.cell(0, 8, f'※ 实验时间：{current_date}', 0, 1, 'L')
         pdf.cell(0, 8, '※ 样本类型：', 0, 1, 'L')
         pdf.cell(0, 8, '※ 检测项目：', 0, 1, 'L')
-        pdf.cell(0, 8, '※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※', 0, 1, 'C')
     
     def _generate_chart_images(self, chart_data):
         """为每个通道生成图表图像"""
         images = []
         
-        # 按通道分组
-        channels = set([item['channel'] for item in chart_data])
+        # 按通道分组和类型排序
+        channels = sorted(set([item['channel'] for item in chart_data]))
         
-        for channel in sorted(channels):
+        # 创建4个图表对（每个通道一对FAM和VIC）
+        for channel in channels:
             # 获取当前通道的FAM和VIC数据
             fam_data = next((item for item in chart_data if item['channel'] == channel and item['type'] == 'FAM'), None)
             vic_data = next((item for item in chart_data if item['channel'] == channel and item['type'] == 'VIC'), None)
             
-            # 创建通道图表
+            # 生成对应的图片
             if fam_data:
-                fam_img = self._create_chart_image(fam_data, f"通道{channel} - FAM", '#FF0000')
-                images.append(fam_img)
+                fam_img = self._create_chart_image(fam_data, f"Channel {channel} - FAM", '#FF0000')
+                images.append({'channel': channel, 'type': 'FAM', 'image': fam_img})
             
             if vic_data:
-                vic_img = self._create_chart_image(vic_data, f"通道{channel} - VIC", '#00AA00')
-                images.append(vic_img)
+                vic_img = self._create_chart_image(vic_data, f"Channel {channel} - VIC", '#00AA00')
+                images.append({'channel': channel, 'type': 'VIC', 'image': vic_img})
+        
+        # 按通道和类型排序，以便正确的排列
+        images.sort(key=lambda x: (x['channel'], 0 if x['type'] == 'FAM' else 1))
         
         return images
     
     def _create_chart_image(self, data, title, color):
-        """创建单个图表图像"""
+        """创建单个图表图像，参考pcr_analyzer.py中的Smoothed Trend处理方式"""
         plt.figure(figsize=(8, 5), dpi=100)
         
         # 设置背景颜色和去除边框
@@ -180,55 +179,64 @@ class PCRReportGenerator:
             spine.set_visible(False)
         
         # 绘制网格线
-        plt.grid(True, linestyle='--', alpha=0.2, color='#cccccc')
+        plt.grid(True, linestyle='--', alpha=0.3, color='#cccccc')
         
         # 获取数据
         raw_data = data.get('raw_data', [])
-        trend_data = data.get('trend_data', [])
+        baseline = data.get('baseline', 0)
+        
+        # 优先使用smoothed_data，如果不存在则使用trend_data
+        smoothed_data = data.get('smoothed_data', [])
+        trend_data = data.get('trend_data', []) if not smoothed_data else smoothed_data
+        
         threshold = data.get('threshold', 800.0)
         ct_value = data.get('ct_value')
+        positive = data.get('positive', False)
         
-        if not raw_data:
-            plt.text(0.5, 0.5, '无数据', ha='center', va='center', fontsize=14)
+        if not raw_data or not trend_data:
+            plt.text(0.5, 0.5, 'No Data', ha='center', va='center', fontsize=14)
         else:
-            # 绘制数据点
-            x = range(1, len(raw_data) + 1)
+            # 创建X轴数据
+            cycles = np.arange(len(trend_data))
             
-            # 绘制原始数据点（半透明）
-            plt.plot(x, raw_data, color=color, alpha=0.2, linewidth=1, label='原始数据')
+            # 绘制平滑处理后的趋势线
+            plt.plot(cycles, trend_data, 
+                     color=color, 
+                     linewidth=2.5,
+                     zorder=3)
             
-            # 绘制趋势线
-            if trend_data:
-                plt.plot(range(1, len(trend_data) + 1), trend_data, color=color, linewidth=2.5, label='趋势', zorder=3)
-                
-                # 添加阈值线
-                plt.axhline(y=threshold, color='#888888', linestyle='--', alpha=0.7, zorder=2)
-                plt.text(len(trend_data)*0.95, threshold+30, f'阈值={threshold}', ha='right', fontsize=10, color='#666666')
-                
-                # 如果有CT值，显示标记
-                if ct_value is not None:
-                    # 添加垂直CT线
-                    plt.axvline(x=ct_value, color='#33cc33', linestyle='--', alpha=0.7, zorder=2)
-                    # 添加CT点
-                    plt.scatter([ct_value], [threshold], color='#33cc33', s=80, zorder=4, edgecolor='white')
-                    # 添加CT值文本
-                    plt.text(ct_value, threshold+100, f'CT={ct_value:.1f}', ha='center', fontsize=12, color='#009900',
-                         bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=3))
+            # 添加阈值线 - 与pcr_analyzer.py一致
+            plt.axhline(y=threshold, color='gray', linestyle=':', alpha=0.5)
+            plt.text(cycles[-1], threshold, 'threshold', ha='right', va='bottom', color='gray', fontsize=9)
+            
+            # 如果有CT值且为阳性，显示标记 - 与pcr_analyzer.py一致
+            if positive and ct_value is not None:
+                # 添加垂直CT线
+                plt.axvline(x=ct_value, color='red', linestyle='--', alpha=0.7)
+                # 添加CT值文本
+                plt.text(ct_value, threshold, 
+                         f"CT={ct_value:.1f}", 
+                         color='red', 
+                         ha='center')
         
-        # 设置标题和标签
-        plt.title(title, fontsize=16, color=color, pad=20, fontweight='bold')
-        plt.xlabel('循环次数', fontsize=12)
-        plt.ylabel('荧光值', fontsize=12)
+        # 设置标题和标签 - 与pcr_analyzer.py一致
+        plt.title(title, fontsize=14, pad=10)
+        plt.xlabel('Cycle', fontsize=11)
+        plt.ylabel('dRn', fontsize=11)
         
         # 设置刻度样式
         plt.tick_params(axis='both', which='both', length=0)
         
-        # 设置图例
-        plt.legend(loc='upper left', fontsize=10, frameon=False)
+        # 使用整数刻度 - 与pcr_analyzer.py一致
+        from matplotlib.ticker import MaxNLocator
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
         
-        # 确保Y轴从0开始
-        bottom, top = plt.ylim()
-        plt.ylim(0, max(top, 1000))
+        # Y轴设置 - 完全参考pcr_analyzer.py中第三列
+        # 注意：在pcr_analyzer.py中，没有特别设置Y轴范围，这里我们也不设置
+        # 这样matplotlib会自动根据数据范围调整Y轴
+        
+        # 调整图形布局，确保所有元素可见
+        plt.tight_layout()
         
         # 保存图像到内存
         img_buffer = io.BytesIO()
@@ -241,35 +249,104 @@ class PCRReportGenerator:
         return img_buffer
     
     def _add_charts_to_pdf(self, pdf, chart_images):
-        """将图表添加到PDF中"""
-        # 每行放两张图
+        """将图表添加到PDF中，按2x4布局排列（左FAM右VIC）"""
+        # 设置固定宽度和间距
         chart_width = 90  # mm
-        charts_per_row = 2
+        chart_height = 65  # 大致的图表高度，实际会根据图表比例调整
+        margin = 10  # 图表之间的垂直间距
         
-        for i, img_buffer in enumerate(chart_images):
-            # 每两张图换行
-            if i > 0 and i % charts_per_row == 0:
-                pdf.ln()
+        # 提取图表信息
+        types = [img_info['type'] for img_info in chart_images]
+        channels = [img_info['channel'] for img_info in chart_images]
+        images = [img_info['image'] for img_info in chart_images]
+        
+        # 找出所有唯一的通道号
+        unique_channels = sorted(set(channels))
+        
+        # 对于每个通道绘制一行（包含FAM和VIC）
+        for i, channel in enumerate(unique_channels):
+            # 确定该通道的FAM和VIC图像索引
+            fam_index = None
+            vic_index = None
             
-            # 计算X位置
-            x_pos = (i % charts_per_row) * chart_width
+            for j, (ch, ty) in enumerate(zip(channels, types)):
+                if ch == channel:
+                    if ty == 'FAM':
+                        fam_index = j
+                    elif ty == 'VIC':
+                        vic_index = j
             
-            # 将图像缓冲区转换为PIL图像
-            image = Image.open(img_buffer)
+            # 在新的一行开始前添加适当的间距
+            if i > 0:
+                pdf.ln(margin)  # 行间距
             
-            # 创建临时文件保存图像
-            temp_img_path = os.path.join(self.reports_folder, f"temp_chart_{i}.png")
-            image.save(temp_img_path)
+            # 记录当前行的起始Y位置
+            row_start_y = pdf.get_y()
             
-            # 添加图像到PDF
-            pdf.image(temp_img_path, x=x_pos, w=chart_width)
+            # 临时保存左右两个图表
+            temp_left_path = None
+            temp_right_path = None
             
-            # 删除临时文件
-            os.remove(temp_img_path)
+            # 准备FAM图像（左侧）
+            if fam_index is not None:
+                fam_img_buffer = images[fam_index]
+                temp_left_path = os.path.join(self.reports_folder, f"temp_chart_fam_{channel}.png")
+                
+                # 转换为PIL图像并保存
+                pil_img = Image.open(fam_img_buffer)
+                pil_img.save(temp_left_path)
             
-            # 如果是单数，确保添加足够的空间
-            if i == len(chart_images) - 1 and (i % charts_per_row) == 0:
-                pdf.ln(50)  # 添加空间以模拟两行高度
+            # 准备VIC图像（右侧）
+            if vic_index is not None:
+                vic_img_buffer = images[vic_index]
+                temp_right_path = os.path.join(self.reports_folder, f"temp_chart_vic_{channel}.png")
+                
+                # 转换为PIL图像并保存
+                pil_img = Image.open(vic_img_buffer)
+                pil_img.save(temp_right_path)
+            
+            # 设置标题的字体和样式
+            pdf.set_font('simhei', '', 12)
+            
+            # 绘制通道标题
+            pdf.cell(0, 8, f'Channel {channel}', 0, 1, 'C')
+            
+            # 更新当前行的起始Y位置（标题后）
+            row_start_y = pdf.get_y()
+            
+            # 现在一起添加左右两个图表（如果存在），确保它们的Y坐标相同
+            if temp_left_path:
+                # 添加FAM图像
+                pdf.image(temp_left_path, x=10, y=row_start_y, w=chart_width)
+                
+                # 删除临时文件
+                os.remove(temp_left_path)
+            
+            if temp_right_path:
+                # 添加VIC图像在同一行的右侧
+                pdf.image(temp_right_path, x=110, y=row_start_y, w=chart_width)
+                
+                # 删除临时文件
+                os.remove(temp_right_path)
+            
+            # 计算实际图表高度并移动到图表下方
+            pdf.set_y(row_start_y + chart_height)
+            
+            # 绘制FAM和VIC的小标签
+            pdf.set_font('simhei', '', 10)
+            pdf.set_text_color(255, 0, 0)  # FAM红色
+            pdf.set_xy(50, pdf.get_y())
+            pdf.cell(20, 6, 'FAM', 0, 0, 'C')
+            
+            pdf.set_text_color(0, 170, 0)  # VIC绿色
+            pdf.set_xy(150, pdf.get_y())
+            pdf.cell(20, 6, 'VIC', 0, 1, 'C')
+            
+            # 重置文本颜色
+            pdf.set_text_color(0, 0, 0)
+        
+        # 确保在所有图表绘制后有足够的垂直空间
+        pdf.ln(5)
     
     def _add_results_table(self, pdf, results):
         """添加结果表格"""
